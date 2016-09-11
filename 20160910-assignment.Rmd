@@ -1,0 +1,113 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Hao Liu"
+date: "September 10, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes. Participants were supervised by an experienced weight lifter to make sure the execution complied to the manner they were supposed to simulate. The exercises were performed by six male participants aged between 20-28 years, with little weight lifting experience. We made sure that all participants could easily simulate the mistakes in a safe and controlled manner by using a relatively light dumbbell (1.25kg).
+
+## Project Requirements
+
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.
+
+```{r}
+suppressMessages(library(curl))
+suppressMessages(library(caret))
+suppressMessages(library(rpart))
+suppressMessages(library(rattle))
+suppressMessages(library(randomForest))
+
+filename_1 <- "trainData.csv"
+fileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(fileUrl, destfile = filename_1)
+
+df_0<-read.csv(filename_1,na.strings=c("NA","#DIV/0!",""))
+dim(df_0)
+```
+
+The dataset has too many variables. Upon data exploration, I observed some variables have large number of NAs that would impact the training of model. The following step removed variables that are:
+
+a. Variables that only have NAs, and therefore have a zero value from nearZeroVar()
+b. The first several columns that has subject's names and the data/time. This is not a time series forecast, so these information is not relevant to the modeling.
+  
+```{r}
+
+nsv<-nearZeroVar(df_0)
+df_1<-df_0[,-nsv]#remove statistically not significant variables
+df_1<-df_1[,-c(1:5)] #remove first several columns that are not relevant for the prediction
+
+```
+
+The second step of the data scrubbing is to review the distribution of NA values in the variables. The analysis below showed the distribution is very polarized. A large number of variables have over 95% of NA in their records. Such variables would cause the model training to fail, and need to be removed. 
+
+After removing these variables, the number of variables is reduced from 160 in the source data to 54. This makes the modeling more efficient and trainable.
+  
+```{r}
+#identify relevant covariates
+x<-apply(df_1,2,function(x) sum(is.na(x)))/nrow(df_1) #calculate the percentage of NA for each variable
+hist(x, breaks=100)
+hist(x[which(x>0.9)]) #large number of variables have over 95% of NA
+df_2<-df_1[,which(x<0.9)]
+
+```
+
+
+Setting up training and testing dataset
+```{r}
+#set up training and testing dataset
+inTrain<-createDataPartition(df_2$classe,p=0.7,list=F)
+training<-df_2[inTrain,]
+testing<-df_2[-inTrain,]
+
+```
+
+Based on the problem to model the class of the activities, this is a classification problem, and therefore the two primarily modeling method: decision tree (rpart package) and random forest (randomForest package) should be considered.
+
+```{r}
+#using classification tree model
+modFit_rpart<-rpart(classe~.,method="class",data=training)
+fancyRpartPlot(modFit_rpart)
+pred_rpart<-predict(modFit_rpart,newdata=testing,type="class")
+confusionMatrix(pred_rpart,testing$classe)
+modFit_rpart
+```
+
+Decision trees tend to be unstable with high variance due to overfitting. A slight change in the training data can cause a significant difference in the model. However, they are easy to interpret and can help us to interpret the method behind more complex machine learning such as randomforest that we will train below. As show in the modFit_rpart above, the primary node splits are based on roll_belt and pitch_forearm, which make a lot of common sense for people with gym experience that the angle of the back (belt) and the movement of arm are important to the right pose. 
+  
+```{r}
+#using rf model
+modFit_rf<-randomForest(classe~.,data=training)
+pred_rf<-predict(modFit_rf,newdata=testing,method="class")
+confusionMatrix(pred_rf,testing$classe)
+
+```
+
+Based on the validation of the model, random forest produced much more accurate results that decision tree. 
+
+Random forests are a type of ensemble method. An ensemble method is a process in which numerous models are fitted and the results are combined for stronger predictions. While this provides great predictions, inference and explainability are often limited. This is why use Decision Tree in combination with randomforest can achieve great modeling and explainability results. 
+
+
+Predict the final results using the randomforest model and the course project's test data for final evaluation.
+  
+```{r}
+#using classification tree model
+filename_test <- "testData.csv"
+fileUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(fileUrl, destfile = filename_test)
+
+df_test<-read.csv(filename_test,na.strings=c("NA","#DIV/0!",""))
+pred_rf_test<-predict(modFit_rf,newdata=df_test,method="class")
+write.csv(pred_rf_test,"prediction.csv")
+
+```
